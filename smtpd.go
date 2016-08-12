@@ -28,8 +28,7 @@ import (
 // Defaults for server configuration options
 const (
 	DefaultDomain         = "local"
-	DefaultAllowedHosts   = "localhost"
-	DefaultTrustedHosts   = "127.0.0.1"
+	DefaultTrustedHosts   = ""
 	DefaultMaxRecipients  = 100
 	DefaultMaxIdleSeconds = 300
 	DefaultMaxClients     = 500
@@ -58,13 +57,19 @@ var commands = map[string]bool{
 	"STARTTLS": true,
 }
 
+// PermissionManager is an interface that should be implemented by users of this library
+// to provide customized functionality for determining whether a host is allowed to send
+// emails to a Server.
+type PermissionManager interface {
+	IsAllowed(string) bool
+}
+
 // ServerConfig contains information used to configure a Server.  Most of the fields
 // have reasonable defaults for usage on localhost.
 type ServerConfig struct {
 	BindAddress     string
 	BindPort        int
 	Domain          string
-	AllowedHosts    string
 	TrustedHosts    string
 	MaxRecipients   int
 	MaxIdleSeconds  int
@@ -185,6 +190,14 @@ type Client struct {
 	trusted    bool
 }
 
+// The default PermissionManager used by a Server that has not been told to do
+// and of the client filtering a production system would want to do.
+type allowOnlyLocalhost struct{}
+
+func (a allowOnlyLocalhost) IsAllowed(host string) bool {
+	return host == "localhost" || host == "127.0.0.1"
+}
+
 // NewServer is the constructor for a new Server that will write emails through
 // the provided channel, and process incoming emails according to the provided
 // configuration.  The only ServerConfig fields that are required are BindAddress
@@ -193,9 +206,6 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	// Apply defaults to any fields that were left out of the config
 	if cfg.Domain == "" {
 		cfg.Domain = DefaultDomain
-	}
-	if cfg.AllowedHosts == "" {
-		cfg.AllowedHosts = DefaultAllowedHosts
 	}
 	if cfg.TrustedHosts == "" {
 		cfg.TrustedHosts = DefaultTrustedHosts
@@ -216,12 +226,6 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	var allowedHosts = make(map[string]bool, 15)
 	var trustedHosts = make(map[string]bool, 15)
 
-	// map the allow hosts for easy lookup
-	if arr := strings.Split(cfg.AllowedHosts, ","); len(arr) > 0 {
-		for i := 0; i < len(arr); i++ {
-			allowedHosts[strings.Trim(arr[i], " ")] = true
-		}
-	}
 	// map the allow hosts for easy lookup
 	if arr := strings.Split(cfg.TrustedHosts, ","); len(arr) > 0 {
 		for i := 0; i < len(arr); i++ {
@@ -267,13 +271,20 @@ func (s *Server) writeMessage(msg Message) {
 }
 
 // Start begins the server's main listener loop, preparing it to accept incoming emails.
-func (s *Server) Start() {
+// It accepts a single argument, which must be an instance of a type that implements PermissionManager.
+// If nil is provided, it will default to an implementing type that only allows emails from
+// localhost.
+func (s *Server) Start(permissionChecker PermissionManager) {
 	defer s.Stop()
 	addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%v:%v", s.listenAddr, s.listenPort))
 	if err != nil {
 		fmt.Printf("Failed to build tcp4 address: %v\n", err)
 		s.Stop()
 		return
+	}
+
+	if permissionChecker == nil {
+		permissionChecker = allowOnlyLocalhost{}
 	}
 
 	// Start listening for SMTP connections
@@ -319,7 +330,7 @@ func (s *Server) Start() {
 			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 			s.sem <- 1 // Wait for active queue to drain.
-			go s.handleClient(&Client{
+			go s.handleClient(permissionChecker, &Client{
 				state:      1,
 				server:     s,
 				conn:       conn,
@@ -357,7 +368,7 @@ func (s *Server) killClient(c *Client) {
 	c.killTime = time.Now().Unix()
 }
 
-func (s *Server) handleClient(c *Client) {
+func (s *Server) handleClient(permissionChecker PermissionManager, c *Client) {
 	fmt.Printf("SMTP Connection from %v, starting session <%v>\n", c.conn.RemoteAddr(), c.id)
 
 	defer func() {
@@ -384,7 +395,7 @@ func (s *Server) handleClient(c *Client) {
 		line, err := c.readLine()
 		if err == nil {
 			if cmd, arg, ok := c.parseCmd(line); ok {
-				c.handle(cmd, arg, line)
+				c.handle(cmd, arg, line, permissionChecker)
 			}
 		} else {
 			// readLine() returned an error
@@ -471,7 +482,7 @@ func (c *Client) parseMessage(mimeParser bool) Message {
 }
 
 // Commands are dispatched to the appropriate handler functions.
-func (c *Client) handle(cmd string, arg string, line string) {
+func (c *Client) handle(cmd string, arg string, line string, permissionChecker PermissionManager) {
 	c.logTrace("In state %d, got command '%s', args '%s'", c.state, cmd, arg)
 
 	// Check against valid SMTP commands
@@ -501,7 +512,7 @@ func (c *Client) handle(cmd string, arg string, line string) {
 		c.mailHandler(cmd, arg)
 		//return
 	case "RCPT":
-		c.rcptHandler(cmd, arg)
+		c.rcptHandler(cmd, arg, permissionChecker)
 		//return
 	case "VRFY":
 		c.Write("252", "Cannot VRFY user, but will accept message")
@@ -629,7 +640,7 @@ func (c *Client) mailHandler(cmd string, arg string) {
 }
 
 // MAIL state -> waiting for RCPTs followed by DATA
-func (c *Client) rcptHandler(cmd string, arg string) {
+func (c *Client) rcptHandler(cmd string, arg string, permissionChecker PermissionManager) {
 	if cmd == "RCPT" {
 		if c.from == "" {
 			c.Write("502", "Missing MAIL FROM command.")
@@ -650,10 +661,11 @@ func (c *Client) rcptHandler(cmd string, arg string) {
 			c.logWarn("Bad address as RCPT arg: %q, %s", recip, err)
 			return
 		}
-		host := strings.Split(addr.Address, "@")[0]
+		host := strings.Split(addr.Address, "@")[1]
 
 		// check if on allowed hosts if client ip not trusted
-		if !c.server.allowedHosts[host] && !c.trusted {
+		//if !c.server.allowedHosts[host] && !c.trusted {
+		if !permissionChecker.IsAllowed(host) && !c.trusted {
 			c.logWarn("Domain not allowed: <%s>", host)
 			c.Write("510", "Recipient address not allowed")
 			return
