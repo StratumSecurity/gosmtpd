@@ -16,9 +16,7 @@ import (
 	"github.com/sloonz/go-iconv"
 )
 
-// Used for message channel, avoids import cycle error
-type Messages []Message
-
+// Message represents a received email with all of its processed contents.
 type Message struct {
 	Subject     string
 	From        *Path
@@ -32,6 +30,7 @@ type Message struct {
 	Unread      bool
 }
 
+// Path describes the path an email took to be received by a Server.
 type Path struct {
 	Relays  []string
 	Mailbox string
@@ -39,18 +38,22 @@ type Path struct {
 	Params  string
 }
 
+// Content holds the meaningful body and headers of a Message.
 type Content struct {
 	Headers  map[string][]string
 	TextBody string
-	HtmlBody string
+	HTMLBody string
 	Size     int
 	Body     string
 }
 
+// MIMEBody contains the parts of a Message's MIME contents.
 type MIMEBody struct {
 	Parts []*MIMEPart
 }
 
+// MIMEPart contains all of the descriptive information and content of a
+// MIME part of an email.
 type MIMEPart struct {
 	Headers          map[string][]string
 	Body             string
@@ -63,6 +66,7 @@ type MIMEPart struct {
 	Size             int
 }
 
+// Attachment contains the contents of an attachment included in an email.
 type Attachment struct {
 	Body             string
 	FileName         string
@@ -73,9 +77,7 @@ type Attachment struct {
 	Size             int
 }
 
-// db.messages.find({ to:{ $elemMatch: { mailbox:"bob" } } })
-// db.messages.find( { 'from.mailbox': "alex" } )
-func PathFromString(path string) *Path {
+func pathFromString(path string) *Path {
 	var relays []string
 	email := path
 	if strings.Contains(path, ":") {
@@ -100,7 +102,7 @@ func PathFromString(path string) *Path {
 	}
 }
 
-func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *Message) error {
+func parseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *Message) error {
 	mr := multipart.NewReader(reader, boundary)
 
 	for {
@@ -146,9 +148,9 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 
 		if strings.HasPrefix(mediatype, "multipart/") && mparams["boundary"] != "" {
 			// Content is another multipart
-			ParseMIME(MIMEBody, mrp, mparams["boundary"], message)
+			parseMIME(MIMEBody, mrp, mparams["boundary"], message)
 		} else {
-			if n, body, err := Partbuf(mrp); err == nil {
+			if n, body, err := partbuf(mrp); err == nil {
 				part := &MIMEPart{Size: int(n), Headers: mrp.Header, Body: string(body), FileName: ""}
 				// Disposition is optional
 				part.Disposition = disposition
@@ -161,10 +163,10 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 
 				if disposition == "attachment" || disposition == "inline" {
 					//log.LogTrace("Found attachment: '%s'", disposition)
-					part.FileName = MimeHeaderDecode(dparams["filename"])
+					part.FileName = mimeHeaderDecode(dparams["filename"])
 
 					if part.FileName == "" && mparams["name"] != "" {
-						part.FileName = MimeHeaderDecode(mparams["name"])
+						part.FileName = mimeHeaderDecode(mparams["name"])
 					}
 				}
 
@@ -188,11 +190,11 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 				//use mediatype; ctype will have 'text/plain; charset=UTF-8'
 				// attachments might be plain text content, so make sure of it
 				if mediatype == "text/plain" && disposition != "attachment" {
-					message.Content.TextBody = MimeBodyDecode(string(body), part.Charset, part.TransferEncoding)
+					message.Content.TextBody = mimeBodyDecode(string(body), part.Charset, part.TransferEncoding)
 				}
 
 				if mediatype == "text/html" && disposition != "attachment" {
-					message.Content.HtmlBody = MimeBodyDecode(string(body), part.Charset, part.TransferEncoding)
+					message.Content.HTMLBody = mimeBodyDecode(string(body), part.Charset, part.TransferEncoding)
 				}
 			} else {
 				fmt.Printf("Error Processing MIME message: <%s>", err)
@@ -203,7 +205,7 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 	return nil
 }
 
-func ContentFromString(data string) *Content {
+func contentFromString(data string) *Content {
 	fmt.Printf("Parsing Content from string: <%d>", len(data))
 	x := strings.SplitN(data, "\r\n\r\n", 2)
 	h := make(map[string][]string, 0)
@@ -241,7 +243,7 @@ func ContentFromString(data string) *Content {
 	}
 }
 
-func Partbuf(reader io.Reader) (int64, []byte, error) {
+func partbuf(reader io.Reader) (int64, []byte, error) {
 	// Read bytes into buffer
 	buf := new(bytes.Buffer)
 	n, err := buf.ReadFrom(reader)
@@ -254,7 +256,7 @@ func Partbuf(reader io.Reader) (int64, []byte, error) {
 
 // Decode strings in Mime header format
 // eg. =?ISO-2022-JP?B?GyRCIVo9dztSOWJAOCVBJWMbKEI=?=
-func MimeHeaderDecode(str string) string {
+func mimeHeaderDecode(str string) string {
 	//str, err := mail.DecodeRFC2047Word(str)
 	str, charset, err := quotedprintable.DecodeHeader(str)
 	charset = strings.ToUpper(charset)
@@ -271,7 +273,7 @@ func MimeHeaderDecode(str string) string {
 	return str
 }
 
-func MimeBodyDecode(str string, charset string, encoding string) string {
+func mimeBodyDecode(str string, charset string, encoding string) string {
 	if encoding == "" {
 		return str
 	}
@@ -325,9 +327,9 @@ func fixCharset(charset string) string {
 }
 
 func setMailBody(rm *mail.Message, msg *Message) {
-	if _, body, err := Partbuf(rm.Body); err == nil {
+	if _, body, err := partbuf(rm.Body); err == nil {
 		if bodyIsHTML(rm) {
-			msg.Content.HtmlBody = string(body)
+			msg.Content.HTMLBody = string(body)
 		} else {
 			msg.Content.TextBody = string(body)
 		}

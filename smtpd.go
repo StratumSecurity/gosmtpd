@@ -53,8 +53,8 @@ var commands = map[string]bool{
 	"STARTTLS": true,
 }
 
-// ServerConfig houses the SMTP server configuration - not using pointers
-// so that I can pass around copies of the object safely.
+// ServerConfig contains information used to configure a Server.  Most of the fields
+// have reasonable defaults for usage on localhost.
 type ServerConfig struct {
 	BindAddress     string
 	BindPort        int
@@ -69,7 +69,9 @@ type ServerConfig struct {
 	PrivateKeyFile  string
 }
 
-// Real server code starts here
+// Server holds state about an SMTP server including everything needed to process
+// messages and use TLS.  It also includes a channel through which messages, i.e.
+// emails, will be written upon receipt for processing by a user of the library.
 type Server struct {
 	outChan         chan<- Message
 	listenAddr      string
@@ -92,6 +94,7 @@ type Server struct {
 	sem             chan int // currently active clients
 }
 
+// Client contains information about a client sending an email to a Server.
 type Client struct {
 	server     *Server
 	state      state
@@ -116,7 +119,10 @@ type Client struct {
 	trusted    bool
 }
 
-// Init a new Client object
+// NewServer is the constructor for a new Server that will write emails through
+// the provided channel, and process incoming emails according to the provided
+// configuration.  The only ServerConfig fields that are required are BindAddress
+// and BindPort.
 func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	// Apply defaults to any fields that were left out of the config
 	if cfg.Domain == "" {
@@ -194,9 +200,8 @@ func (s *Server) writeMessage(msg Message) {
 	s.outChan <- msg
 }
 
-// Main listener loop
+// Start begins the server's main listener loop, preparing it to accept incoming emails.
 func (s *Server) Start() {
-
 	defer s.Stop()
 	addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%v:%v", s.listenAddr, s.listenPort))
 	if err != nil {
@@ -262,14 +267,14 @@ func (s *Server) Start() {
 	}
 }
 
-// Stop requests the SMTP server closes it's listener
+// Stop requests the SMTP server closes it's listener.
 func (s *Server) Stop() {
 	fmt.Printf("SMTP shutdown requested, connections will be drained\n")
 	s.shutdown = true
 	s.listener.Close()
 }
 
-// Drain causes the caller to block until all active SMTP sessions have finished
+// Drain causes the caller to block until all active SMTP sessions have finished.
 func (s *Server) Drain() {
 	s.waitgroup.Wait()
 	fmt.Printf("SMTP connections drained\n")
@@ -344,11 +349,11 @@ func (s *Server) handleClient(c *Client) {
 func (c *Client) parseMessage(mimeParser bool) Message {
 	var arr []*Path
 	for _, path := range c.recipients {
-		arr = append(arr, PathFromString(path))
+		arr = append(arr, pathFromString(path))
 	}
 
 	msg := Message{
-		From:    PathFromString(c.from),
+		From:    pathFromString(c.from),
 		To:      arr,
 		Created: time.Now(),
 		IP:      c.remoteHost,
@@ -363,13 +368,13 @@ func (c *Client) parseMessage(mimeParser bool) Message {
 			fmt.Printf("Reading Mail Message\n")
 			msg.Content.Size = len(c.data)
 			msg.Content.Headers = rm.Header
-			msg.Subject = MimeHeaderDecode(rm.Header.Get("Subject"))
+			msg.Subject = mimeHeaderDecode(rm.Header.Get("Subject"))
 
 			if mt, p, err := mime.ParseMediaType(rm.Header.Get("Content-Type")); err == nil {
 				if strings.HasPrefix(mt, "multipart/") {
 					fmt.Printf("Parsing MIME Message\n")
 					MIMEBody := &MIMEBody{Parts: make([]*MIMEPart, 0)}
-					if err := ParseMIME(MIMEBody, rm.Body, p["boundary"], &msg); err == nil {
+					if err := parseMIME(MIMEBody, rm.Body, p["boundary"], &msg); err == nil {
 						fmt.Printf("Got multiparts %d\n", len(MIMEBody.Parts))
 						msg.MIME = MIMEBody
 					}
@@ -383,7 +388,7 @@ func (c *Client) parseMessage(mimeParser bool) Message {
 			msg.Content.TextBody = c.data
 		}
 	} else {
-		msg.Content = ContentFromString(c.data)
+		msg.Content = contentFromString(c.data)
 	}
 
 	randomID := make([]byte, 16)
