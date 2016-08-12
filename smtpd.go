@@ -13,7 +13,6 @@ import (
 	"mime"
 	"net"
 	"net/mail"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -68,8 +67,6 @@ type ServerConfig struct {
 	MaxMessageBytes int
 	PublicKeyFile   string
 	PrivateKeyFile  string
-	DebugModeOn     bool
-	DebugPath       string
 }
 
 // Real server code starts here
@@ -92,8 +89,6 @@ type Server struct {
 	UseTLS          bool
 	TLSConfig       tls.Config
 	ForceTLS        bool
-	DebugModeOn     bool
-	DebugPath       string
 	sem             chan int // currently active clients
 }
 
@@ -176,8 +171,6 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 		waitgroup:       new(sync.WaitGroup),
 		allowedHosts:    allowedHosts,
 		trustedHosts:    trustedHosts,
-		DebugModeOn:     cfg.DebugModeOn,
-		DebugPath:       cfg.DebugPath,
 		sem:             maxClients,
 	}
 
@@ -743,11 +736,6 @@ func (c *Client) processData() {
 		text := string(buf[0:n])
 		msg += text
 
-		// If we have debug true, save the mail to file for review
-		if c.server.DebugModeOn {
-			c.saveMailDatatoFile(msg)
-		}
-
 		if len(msg) > c.server.maxMessageBytes {
 			c.logWarn("Maximum DATA size exceeded (%s)", strconv.Itoa(c.server.maxMessageBytes))
 			c.Write("552", "Maximum message size exceeded")
@@ -940,23 +928,6 @@ func (c *Client) logError(msg string, args ...interface{}) {
 	// Update metrics
 	//expErrorsTotal.Add(1)
 	fmt.Printf("SMTP[%v]<%v> %v\n", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
-}
-
-// Debug mail data to file
-func (c *Client) saveMailDatatoFile(msg string) {
-	filename := fmt.Sprintf("%s/%s-%s-%s.raw", c.server.DebugPath, c.remoteHost, c.from, time.Now().Format("Jan-2-2006-3:04:00pm"))
-	f, err := os.Create(filename)
-
-	if err != nil {
-		fmt.Printf("Error saving file %v\n", err)
-	}
-
-	defer f.Close()
-	n, err := io.WriteString(f, msg)
-
-	if err != nil {
-		fmt.Printf("Error saving file %v: %v\n", n, err)
-	}
 }
 
 func parseHelloArgument(arg string) (string, error) {
