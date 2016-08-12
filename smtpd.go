@@ -55,11 +55,6 @@ type SMTPConfig struct {
 	MaxMessageBytes int
 	PubKey          string
 	PrvKey          string
-	StoreMessages   bool
-	Xclient         bool
-	HostGreyList    bool
-	FromGreyList    bool
-	RcptGreyList    bool
 	Debug           bool
 	DebugPath       string
 	SpamRegex       string
@@ -85,9 +80,6 @@ type Server struct {
 	ForceTLS        bool
 	Debug           bool
 	DebugPath       string
-	HostGreyList    bool
-	FromGreyList    bool
-	RcptGreyList    bool
 	sem             chan int // currently active clients
 	SpamRegex       string
 }
@@ -143,14 +135,9 @@ func NewSmtpServer(cfg SMTPConfig, output chan<- Message) *Server {
 		maxRecips:       cfg.MaxRecipients,
 		maxIdleSeconds:  cfg.MaxIdleSeconds,
 		maxMessageBytes: cfg.MaxMessageBytes,
-		storeMessages:   cfg.StoreMessages,
 		waitgroup:       new(sync.WaitGroup),
 		allowedHosts:    allowedHosts,
 		trustedHosts:    trustedHosts,
-		EnableXCLIENT:   cfg.Xclient,
-		HostGreyList:    cfg.HostGreyList,
-		FromGreyList:    cfg.FromGreyList,
-		RcptGreyList:    cfg.RcptGreyList,
 		Debug:           cfg.Debug,
 		DebugPath:       cfg.DebugPath,
 		sem:             maxClients,
