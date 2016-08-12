@@ -1,6 +1,6 @@
 // Adapted from https://github.com/gleez/smtpd
 
-package smtpd
+package main
 
 import (
 	"bufio"
