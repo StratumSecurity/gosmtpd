@@ -829,17 +829,10 @@ func (c *Client) processData() {
 		msg = strings.TrimSuffix(msg, "\r\n.\r\n")
 		c.data = msg
 
-		if c.server.storeMessages {
-			// Send to savemail channel
-			// TODO - Figure out a way to make this mimeparser=true parameter configurable
-			c.server.WriteMessage(c.ParseMessage(true))
-			c.Write("250", "Ok: queued")
-			c.logInfo("Message size %v bytes", len(msg))
-		} else {
-			// we dont store messages here, just deliver to hell
-			c.Write("250", "Mail accepted for delivery")
-			c.logInfo("Message size %v bytes", len(msg))
-		}
+		// TODO - Figure out a way to make this mimeparser=true parameter configurable
+		c.server.WriteMessage(c.ParseMessage(true))
+		c.Write("250", "Mail accepted for delivery")
+		c.logInfo("Message size %v bytes", len(msg))
 	}
 
 	c.reset()
