@@ -45,6 +45,30 @@ var commands = map[string]bool{
 	"XCLIENT":  true,
 }
 
+// SMTPConfig houses the SMTP server configuration - not using pointers
+// so that I can pass around copies of the object safely.
+type SMTPConfig struct {
+	Ip4address      net.IP
+	Ip4port         int
+	Domain          string
+	AllowedHosts    string
+	TrustedHosts    string
+	MaxRecipients   int
+	MaxIdleSeconds  int
+	MaxClients      int
+	MaxMessageBytes int
+	PubKey          string
+	PrvKey          string
+	StoreMessages   bool
+	Xclient         bool
+	HostGreyList    bool
+	FromGreyList    bool
+	RcptGreyList    bool
+	Debug           bool
+	DebugPath       string
+	SpamRegex       string
+}
+
 // Real server code starts here
 type Server struct {
 	Store           *data.DataStore
@@ -97,7 +121,7 @@ type Client struct {
 }
 
 // Init a new Client object
-func NewSmtpServer(cfg config.SmtpConfig, ds *data.DataStore) *Server {
+func NewSmtpServer(cfg SMTPConfig, ds *data.DataStore) *Server {
 	var allowedHosts = make(map[string]bool, 15)
 	var trustedHosts = make(map[string]bool, 15)
 
@@ -141,7 +165,7 @@ func NewSmtpServer(cfg config.SmtpConfig, ds *data.DataStore) *Server {
 
 // Main listener loop
 func (s *Server) Start() {
-	cfg := config.GetSmtpConfig()
+	cfg := config.GetSMTPConfig()
 
 	log.LogTrace("Loading the certificate: %s", cfg.PubKey)
 	cert, err := tls.LoadX509KeyPair(cfg.PubKey, cfg.PrvKey)
@@ -783,7 +807,7 @@ func (c *Client) processData() {
 
 		if c.server.storeMessages {
 			// Create Message Structure
-			mc := &config.SMTPMessage{}
+			mc := &SMTPMessage{}
 			mc.Helo = c.helo
 			mc.From = c.from
 			mc.To = c.recipients

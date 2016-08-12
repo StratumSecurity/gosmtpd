@@ -13,11 +13,20 @@ import (
 	"time"
 
 	"github.com/alexcesaro/mail/quotedprintable"
-	"github.com/gleez/smtpd/config"
-	"github.com/gleez/smtpd/log"
 	"github.com/sloonz/go-iconv"
-	"gopkg.in/mgo.v2/bson"
 )
+
+// Used for message channel, avoids import cycle error
+type SMTPMessage struct {
+	From   string
+	To     []string
+	Data   string
+	Helo   string
+	Host   string
+	Domain string
+	Hash   string
+	Notify chan int
+}
 
 type Messages []Message
 
