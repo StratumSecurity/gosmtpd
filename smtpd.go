@@ -86,7 +86,7 @@ type Server struct {
 	allowedHosts    map[string]bool
 	trustedHosts    map[string]bool
 	maxClients      int
-	UseTLS          bool
+	useTLS          bool
 	TLSConfig       tls.Config
 	ForceTLS        bool
 	sem             chan int // currently active clients
@@ -184,7 +184,7 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 			ClientAuth:   tls.VerifyClientCertIfGiven,
 			ServerName:   s.domain,
 		}
-		s.UseTLS = true
+		s.useTLS = true
 		//s.TLSConfig  .Rand = rand.Reader
 	}
 	return s
@@ -486,7 +486,7 @@ func (c *Client) greetHandler(cmd string, arg string) {
 			return
 		}
 
-		if c.server.UseTLS && !c.tlsOn {
+		if c.server.useTLS && !c.tlsOn {
 			c.Write("250", "Hello "+domain+"["+c.remoteHost+"]", "PIPELINING", "8BITMIME", "STARTTLS", "AUTH EXTERNAL CRAM-MD5 LOGIN PLAIN", fmt.Sprintf("SIZE %v", c.server.maxMessageBytes))
 			//c.Write("250", "Hello "+domain+"["+c.remoteHost+"]", "8BITMIME", fmt.Sprintf("SIZE %v", c.server.maxMessageBytes), "HELP")
 		} else {
@@ -652,7 +652,7 @@ func (c *Client) tlsHandler() {
 		return
 	}
 
-	if !c.server.UseTLS {
+	if !c.server.useTLS {
 		c.Write("502", "TLS not supported")
 		return
 	}
