@@ -21,6 +21,17 @@ import (
 	"time"
 )
 
+// Defaults for server configuration options
+const (
+	DefaultDomain         = "local"
+	DefaultAllowedHosts   = "localhost"
+	DefaultTrustedHosts   = "127.0.0.1"
+	DefaultMaxRecipients  = 100
+	DefaultMaxIdleSeconds = 300
+	DefaultMaxClients     = 500
+	DefaultMaxMsgBytes    = 20480000
+)
+
 type state int
 
 var commands = map[string]bool{
@@ -112,6 +123,29 @@ type Client struct {
 
 // Init a new Client object
 func NewServer(output chan<- Message, cfg ServerConfig) *Server {
+	// Apply defaults to any fields that were left out of the config
+	if cfg.Domain == "" {
+		cfg.Domain = DefaultDomain
+	}
+	if cfg.AllowedHosts == "" {
+		cfg.AllowedHosts = DefaultAllowedHosts
+	}
+	if cfg.TrustedHosts == "" {
+		cfg.TrustedHosts = DefaultTrustedHosts
+	}
+	if cfg.MaxRecipients == 0 {
+		cfg.MaxRecipients = DefaultMaxRecipients
+	}
+	if cfg.MaxIdleSeconds == 0 {
+		cfg.MaxIdleSeconds = DefaultMaxIdleSeconds
+	}
+	if cfg.MaxClients == 0 {
+		cfg.MaxClients = DefaultMaxClients
+	}
+	if cfg.MaxMessageBytes == 0 {
+		cfg.MaxMessageBytes = DefaultMaxMsgBytes
+	}
+
 	var allowedHosts = make(map[string]bool, 15)
 	var trustedHosts = make(map[string]bool, 15)
 
