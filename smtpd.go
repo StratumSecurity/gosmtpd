@@ -43,11 +43,11 @@ var commands = map[string]bool{
 	"STARTTLS": true,
 }
 
-// SMTPConfig houses the SMTP server configuration - not using pointers
+// ServerConfig houses the SMTP server configuration - not using pointers
 // so that I can pass around copies of the object safely.
-type SMTPConfig struct {
-	Ip4address      string
-	Ip4port         int
+type ServerConfig struct {
+	BindAddress     string
+	BindPort        int
 	Domain          string
 	AllowedHosts    string
 	TrustedHosts    string
@@ -55,9 +55,9 @@ type SMTPConfig struct {
 	MaxIdleSeconds  int
 	MaxClients      int
 	MaxMessageBytes int
-	PubKey          string
-	PrvKey          string
-	Debug           bool
+	PublicKeyFile   string
+	PrivateKeyFile  string
+	DebugModeOn     bool
 	DebugPath       string
 }
 
@@ -81,7 +81,7 @@ type Server struct {
 	UseTLS          bool
 	TLSConfig       tls.Config
 	ForceTLS        bool
-	Debug           bool
+	DebugModeOn     bool
 	DebugPath       string
 	sem             chan int // currently active clients
 }
@@ -111,7 +111,7 @@ type Client struct {
 }
 
 // Init a new Client object
-func NewServer(output chan<- Message, cfg SMTPConfig) *Server {
+func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	var allowedHosts = make(map[string]bool, 15)
 	var trustedHosts = make(map[string]bool, 15)
 
@@ -133,8 +133,8 @@ func NewServer(output chan<- Message, cfg SMTPConfig) *Server {
 
 	s := &Server{
 		outChan:         output,
-		listenAddr:      cfg.Ip4address,
-		listenPort:      cfg.Ip4port,
+		listenAddr:      cfg.BindAddress,
+		listenPort:      cfg.BindPort,
 		domain:          cfg.Domain,
 		maxRecips:       cfg.MaxRecipients,
 		maxIdleSeconds:  cfg.MaxIdleSeconds,
@@ -142,13 +142,13 @@ func NewServer(output chan<- Message, cfg SMTPConfig) *Server {
 		waitgroup:       new(sync.WaitGroup),
 		allowedHosts:    allowedHosts,
 		trustedHosts:    trustedHosts,
-		Debug:           cfg.Debug,
+		DebugModeOn:     cfg.DebugModeOn,
 		DebugPath:       cfg.DebugPath,
 		sem:             maxClients,
 	}
 
-	fmt.Printf("Loading the certificate: %s\n", cfg.PubKey)
-	cert, err := tls.LoadX509KeyPair(cfg.PubKey, cfg.PrvKey)
+	fmt.Printf("Loading the certificate: %s\n", cfg.PublicKeyFile)
+	cert, err := tls.LoadX509KeyPair(cfg.PublicKeyFile, cfg.PrivateKeyFile)
 	if err != nil {
 		fmt.Printf("There was a problem with loading the certificate: %s\n", err)
 	} else {
@@ -714,7 +714,7 @@ func (c *Client) processData() {
 		msg += text
 
 		// If we have debug true, save the mail to file for review
-		if c.server.Debug {
+		if c.server.DebugModeOn {
 			c.saveMailDatatoFile(msg)
 		}
 
