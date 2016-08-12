@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-type State int
+type state int
 
 var commands = map[string]bool{
 	"HELO":     true,
@@ -89,7 +89,7 @@ type Server struct {
 
 type Client struct {
 	server     *Server
-	state      State
+	state      state
 	helo       string
 	from       string
 	recipients []string
@@ -751,7 +751,7 @@ func (c *Client) reject() {
 	c.server.closeClient(c)
 }
 
-func (c *Client) enterState(state State) {
+func (c *Client) enterState(state state) {
 	c.state = state
 	c.logTrace("Entering state %v", state)
 }
