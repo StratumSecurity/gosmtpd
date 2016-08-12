@@ -28,6 +28,7 @@ func main() {
 		Debug:           false,
 		DebugPath:       "",
 	})
+	go handleMessages(messages)
 	server.Start()
 	server.Drain()
 }
