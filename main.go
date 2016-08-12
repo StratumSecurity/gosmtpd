@@ -4,6 +4,12 @@ import (
 	"fmt"
 )
 
+type allowAll struct{}
+
+func (a allowAll) IsAllowed(s string) bool {
+	return true
+}
+
 func handleMessages(in <-chan Message) {
 	for {
 		msg := <-in
@@ -18,6 +24,6 @@ func main() {
 		BindPort:    25,
 	})
 	go handleMessages(messages)
-	server.Start()
+	server.Start(allowAll{})
 	server.Drain()
 }
