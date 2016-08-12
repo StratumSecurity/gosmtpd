@@ -497,7 +497,7 @@ func (c *Client) mailHandler(cmd string, arg string) {
 		}
 
 		from := m[1]
-		_, _, err := ParseEmailAddress(from)
+		_, err := mail.ParseAddress(from)
 		if err != nil {
 			c.Write("501", "Bad sender address syntax")
 			c.logWarn("Bad address as MAIL arg: %q, %s", from, err)
@@ -552,12 +552,13 @@ func (c *Client) rcptHandler(cmd string, arg string) {
 
 		// This trim is probably too forgiving
 		recip := strings.Trim(arg[3:], "<> ")
-		_, host, err := ParseEmailAddress(recip)
+		addr, err := mail.ParseAddress(recip)
 		if err != nil {
 			c.Write("501", "Bad recipient address syntax")
 			c.logWarn("Bad address as RCPT arg: %q, %s", recip, err)
 			return
 		}
+		host := strings.split(addr.Address, "@")[0]
 
 		// check if on allowed hosts if client ip not trusted
 		if !c.server.allowedHosts[host] && !c.trusted {
