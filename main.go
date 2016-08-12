@@ -2,11 +2,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/StratumSecurity/gosmtpd"
 	"net"
 )
 
-func handleMessages(in <-chan smtpd.Message) {
+func handleMessages(in <-chan Message) {
 	for {
 		msg := <-in
 		fmt.Println("Got message\n", msg, "\n")
@@ -14,11 +13,11 @@ func handleMessages(in <-chan smtpd.Message) {
 }
 
 func main() {
-	messages := make(chan smtpd.Message)
-	server := smtpd.NewServer(messages, SMTPConfig{
+	messages := make(chan Message)
+	server := NewServer(messages, SMTPConfig{
 		Ip4address:      net.ParseIP("127.0.0.1"),
 		Ip4port:         25,
-		Domain:          "smtpd.local",
+		Domain:          "local",
 		AllowedHosts:    "localhost",
 		TrustedHosts:    "127.0.0.1",
 		MaxRecipients:   100,
