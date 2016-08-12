@@ -15,7 +15,6 @@ import (
 	"net/mail"
 	"os"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,7 +222,6 @@ func (s *Server) Start() {
 		} else {
 			tempDelay = 0
 			s.waitgroup.Add(1)
-			fmt.Printf("There are now %s serving goroutines\n", strconv.Itoa(runtime.NumGoroutine()))
 			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 			s.sem <- 1 // Wait for active queue to drain.
@@ -558,7 +556,7 @@ func (c *Client) rcptHandler(cmd string, arg string) {
 			c.logWarn("Bad address as RCPT arg: %q, %s", recip, err)
 			return
 		}
-		host := strings.split(addr.Address, "@")[0]
+		host := strings.Split(addr.Address, "@")[0]
 
 		// check if on allowed hosts if client ip not trusted
 		if !c.server.allowedHosts[host] && !c.trusted {
