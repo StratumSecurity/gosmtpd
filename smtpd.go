@@ -117,7 +117,7 @@ type Client struct {
 }
 
 // Init a new Client object
-func NewSmtpServer(cfg SMTPConfig, ds *data.DataStore) *Server {
+func NewSmtpServer(cfg SMTPConfig, output chan<- Message) *Server {
 	var allowedHosts = make(map[string]bool, 15)
 	var trustedHosts = make(map[string]bool, 15)
 
@@ -127,7 +127,6 @@ func NewSmtpServer(cfg SMTPConfig, ds *data.DataStore) *Server {
 			allowedHosts[strings.Trim(arr[i], " ")] = true
 		}
 	}
-<-
 	// map the allow hosts for easy lookup
 	if arr := strings.Split(cfg.TrustedHosts, ","); len(arr) > 0 {
 		for i := 0; i < len(arr); i++ {
@@ -139,7 +138,7 @@ func NewSmtpServer(cfg SMTPConfig, ds *data.DataStore) *Server {
 	maxClients := make(chan int, cfg.MaxClients)
 
 	return &Server{
-		Store:           ds,
+		outChan:         output,
 		domain:          cfg.Domain,
 		maxRecips:       cfg.MaxRecipients,
 		maxIdleSeconds:  cfg.MaxIdleSeconds,
@@ -157,6 +156,10 @@ func NewSmtpServer(cfg SMTPConfig, ds *data.DataStore) *Server {
 		sem:             maxClients,
 		SpamRegex:       cfg.SpamRegex,
 	}
+}
+
+func (s *Server) WriteMessage(msg Message) {
+	s.outChan <- msg
 }
 
 // Main listener loop
@@ -842,7 +845,7 @@ func (c *Client) processData() {
 		if c.server.storeMessages {
 			// Send to savemail channel
 			// TODO - Figure out a way to make this mimeparser=true parameter configurable
-			c.server.outChan <- c.ParseMessage(true)
+			c.server.WriteMessage(c.ParseMessage(true))
 
 			select {
 			// wait for the save to complete
