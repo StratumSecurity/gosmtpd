@@ -105,11 +105,11 @@ type Client struct {
 	subject    string
 	hash       string
 	time       int64
-	tls_on     bool
+	tlsOn      bool
 	conn       net.Conn
 	bufin      *bufio.Reader
 	bufout     *bufio.Writer
-	kill_time  int64
+	killTime   int64
 	errors     int
 	id         int64
 	tlsConn    *tls.Conn
@@ -190,7 +190,7 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	return s
 }
 
-func (s *Server) WriteMessage(msg Message) {
+func (s *Server) writeMessage(msg Message) {
 	s.outChan <- msg
 }
 
@@ -215,10 +215,10 @@ func (s *Server) Start() {
 	}
 
 	var tempDelay time.Duration
-	var clientId int64
+	var clientID int64
 
 	// Handle incoming connections
-	for clientId = 1; ; clientId++ {
+	for clientID = 1; ; clientID++ {
 		if conn, err := s.listener.Accept(); err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
 				// Temporary error, sleep for a bit and try again
@@ -256,7 +256,7 @@ func (s *Server) Start() {
 				time:       time.Now().Unix(),
 				bufin:      bufio.NewReader(conn),
 				bufout:     bufio.NewWriter(conn),
-				id:         clientId,
+				id:         clientID,
 			})
 		}
 	}
@@ -283,7 +283,7 @@ func (s *Server) closeClient(c *Client) {
 }
 
 func (s *Server) killClient(c *Client) {
-	c.kill_time = time.Now().Unix()
+	c.killTime = time.Now().Unix()
 }
 
 func (s *Server) handleClient(c *Client) {
@@ -332,7 +332,7 @@ func (s *Server) handleClient(c *Client) {
 			break
 		}
 
-		if c.kill_time > 1 || c.errors > 3 {
+		if c.killTime > 1 || c.errors > 3 {
 			return
 		}
 	}
@@ -341,8 +341,8 @@ func (s *Server) handleClient(c *Client) {
 }
 
 // TODO support nested MIME content
-func (c *Client) ParseMessage(mimeParser bool) Message {
-	arr := make([]*Path, 0)
+func (c *Client) parseMessage(mimeParser bool) Message {
+	var arr []*Path
 	for _, path := range c.recipients {
 		arr = append(arr, PathFromString(path))
 	}
@@ -351,7 +351,7 @@ func (c *Client) ParseMessage(mimeParser bool) Message {
 		From:    PathFromString(c.from),
 		To:      arr,
 		Created: time.Now(),
-		Ip:      c.remoteHost,
+		IP:      c.remoteHost,
 		Unread:  true,
 		Starred: false,
 	}
@@ -486,7 +486,7 @@ func (c *Client) greetHandler(cmd string, arg string) {
 			return
 		}
 
-		if c.server.UseTLS && !c.tls_on {
+		if c.server.UseTLS && !c.tlsOn {
 			c.Write("250", "Hello "+domain+"["+c.remoteHost+"]", "PIPELINING", "8BITMIME", "STARTTLS", "AUTH EXTERNAL CRAM-MD5 LOGIN PLAIN", fmt.Sprintf("SIZE %v", c.server.maxMessageBytes))
 			//c.Write("250", "Hello "+domain+"["+c.remoteHost+"]", "8BITMIME", fmt.Sprintf("SIZE %v", c.server.maxMessageBytes), "HELP")
 		} else {
@@ -598,9 +598,8 @@ func (c *Client) rcptHandler(cmd string, arg string) {
 		c.logInfo("Recipient: %v", recip)
 		c.Write("250", fmt.Sprintf("I'll make sure <%v> gets this", recip))
 		return
-	} else {
-		c.ooSeq(cmd)
 	}
+	c.ooSeq(cmd)
 }
 
 func (c *Client) authHandler(cmd string, arg string) {
@@ -648,7 +647,7 @@ func (c *Client) authHandler(cmd string, arg string) {
 }
 
 func (c *Client) tlsHandler() {
-	if c.tls_on {
+	if c.tlsOn {
 		c.Write("502", "Already running in TLS")
 		return
 	}
@@ -671,7 +670,7 @@ func (c *Client) tlsHandler() {
 		c.conn = tlsConn
 		c.bufin = bufio.NewReader(c.conn)
 		c.bufout = bufio.NewWriter(c.conn)
-		c.tls_on = true
+		c.tlsOn = true
 
 		// Reset envelope as a new EHLO/HELO is required after STARTTLS
 		c.reset()
@@ -703,13 +702,9 @@ func (c *Client) dataHandler(cmd string, arg string) {
 		c.logTrace("Go ahead we have recipients %d", len(c.recipients))
 		c.Write("354", "Go ahead. End your data with <CR><LF>.<CR><LF>")
 		c.state = 2
-		return
 	} else {
 		c.Write("502", "Missing RCPT TO command.")
-		return
 	}
-
-	return
 }
 
 func (c *Client) processData() {
@@ -755,7 +750,7 @@ func (c *Client) processData() {
 		c.data = msg
 
 		// TODO - Figure out a way to make this mimeparser=true parameter configurable
-		c.server.WriteMessage(c.ParseMessage(true))
+		c.server.writeMessage(c.parseMessage(true))
 		c.Write("250", "Mail accepted for delivery")
 		c.logInfo("Message size %v bytes", len(msg))
 	}

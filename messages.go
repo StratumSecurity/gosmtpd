@@ -25,7 +25,7 @@ type Message struct {
 	To          []*Path
 	Created     time.Time
 	Attachments []*Attachment
-	Ip          string
+	IP          string
 	Content     *Content
 	MIME        *MIMEBody
 	Starred     bool
@@ -76,7 +76,7 @@ type Attachment struct {
 // db.messages.find({ to:{ $elemMatch: { mailbox:"bob" } } })
 // db.messages.find( { 'from.mailbox': "alex" } )
 func PathFromString(path string) *Path {
-	relays := make([]string, 0)
+	var relays []string
 	email := path
 	if strings.Contains(path, ":") {
 		x := strings.SplitN(path, ":", 2)
@@ -232,13 +232,12 @@ func ContentFromString(data string) *Content {
 			Body:    body,
 			//Body:   "",
 		}
-	} else {
-		return &Content{
-			Size:     len(data),
-			Headers:  h,
-			Body:     x[0],
-			TextBody: x[0],
-		}
+	}
+	return &Content{
+		Size:     len(data),
+		Headers:  h,
+		Body:     x[0],
+		TextBody: x[0],
 	}
 }
 
@@ -304,23 +303,23 @@ func MimeBodyDecode(str string, charset string, encoding string) string {
 
 func fixCharset(charset string) string {
 	reg, _ := regexp.Compile(`[_:.\/\\]`)
-	fixed_charset := reg.ReplaceAllString(charset, "-")
+	fixedCharset := reg.ReplaceAllString(charset, "-")
 	// Fix charset
 	// borrowed from http://squirrelmail.svn.sourceforge.net/viewvc/squirrelmail/trunk/squirrelmail/include/languages.php?revision=13765&view=markup
 	// OE ks_c_5601_1987 > cp949
-	fixed_charset = strings.Replace(fixed_charset, "ks-c-5601-1987", "cp949", -1)
+	fixedCharset = strings.Replace(fixedCharset, "ks-c-5601-1987", "cp949", -1)
 	// Moz x-euc-tw > euc-tw
-	fixed_charset = strings.Replace(fixed_charset, "x-euc", "euc", -1)
+	fixedCharset = strings.Replace(fixedCharset, "x-euc", "euc", -1)
 	// Moz x-windows-949 > cp949
-	fixed_charset = strings.Replace(fixed_charset, "x-windows_", "cp", -1)
+	fixedCharset = strings.Replace(fixedCharset, "x-windows_", "cp", -1)
 	// windows-125x and cp125x charsets
-	fixed_charset = strings.Replace(fixed_charset, "windows-", "cp", -1)
+	fixedCharset = strings.Replace(fixedCharset, "windows-", "cp", -1)
 	// ibm > cp
-	fixed_charset = strings.Replace(fixed_charset, "ibm", "cp", -1)
+	fixedCharset = strings.Replace(fixedCharset, "ibm", "cp", -1)
 	// iso-8859-8-i -> iso-8859-8
-	fixed_charset = strings.Replace(fixed_charset, "iso-8859-8-i", "iso-8859-8", -1)
-	if charset != fixed_charset {
-		return fixed_charset
+	fixedCharset = strings.Replace(fixedCharset, "iso-8859-8-i", "iso-8859-8", -1)
+	if charset != fixedCharset {
+		return fixedCharset
 	}
 	return charset
 }
