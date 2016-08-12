@@ -42,7 +42,6 @@ var commands = map[string]bool{
 	"TURN":     true,
 	"AUTH":     true,
 	"STARTTLS": true,
-	"XCLIENT":  true,
 }
 
 // SMTPConfig houses the SMTP server configuration - not using pointers
@@ -80,7 +79,6 @@ type Server struct {
 	allowedHosts    map[string]bool
 	trustedHosts    map[string]bool
 	maxClients      int
-	EnableXCLIENT   bool
 	UseTLS          bool
 	TLSConfig       tls.Config
 	ForceTLS        bool
@@ -439,8 +437,6 @@ func (c *Client) handle(cmd string, arg string, line string) {
 	case "STARTTLS":
 		c.tlsHandler()
 		//return
-	case "XCLIENT":
-		c.handleXCLIENT(cmd, arg, line)
 	default:
 		c.errors++
 		if c.errors > 3 {
@@ -694,94 +690,6 @@ func (c *Client) dataHandler(cmd string, arg string) {
 	return
 }
 
-func (c *Client) handleXCLIENT(cmd string, arg string, line string) {
-
-	if !c.server.EnableXCLIENT {
-		c.Write("550", "XCLIENT not enabled")
-		return
-	}
-
-	var (
-		newHeloName        = ""
-		newAddr     net.IP = nil
-	)
-
-	// Important set the trusted to false
-	c.trusted = false
-
-	c.logTrace("Handle XCLIENT args: %q", arg)
-	line1 := strings.Fields(arg)
-
-	for _, item := range line1[0:] {
-
-		parts := strings.Split(item, "=")
-		c.logTrace("Handle XCLIENT parts: %q", parts)
-
-		if len(parts) != 2 {
-			c.Write("502", "Couldn't decode the command.")
-			return
-		}
-
-		name := parts[0]
-		value := parts[1]
-
-		switch name {
-		case "NAME":
-			// Unused in smtpd package
-			continue
-		case "HELO":
-			newHeloName = value
-			continue
-		case "ADDR":
-			newAddr = net.ParseIP(value)
-			continue
-		case "PORT":
-			_, err := strconv.ParseUint(value, 10, 16)
-			if err != nil {
-				c.Write("502", "Couldn't decode the command.")
-				return
-			}
-			continue
-		case "LOGIN":
-			//newUsername = value
-			continue
-		case "PROTO":
-			/*			if value == "SMTP" {
-							newProto = SMTP
-						} else if value == "ESMTP" {
-							newProto = ESMTP
-						}*/
-			continue
-		default:
-			c.Write("502", "Couldn't decode the command.")
-			return
-		}
-	}
-
-	if newHeloName != "" {
-		c.helo = newHeloName
-	}
-
-	if newAddr != nil {
-		c.remoteHost = newAddr.String()
-		// check if client on trusted hosts
-		if c.server.trustedHosts[c.remoteHost] {
-			c.logTrace("Remote Client is Trusted: <%s>", c.remoteHost)
-			c.trusted = true
-		}
-
-		c.logTrace("XClient from ip via: <%s>", c.remoteHost)
-		c.Write("250", "Ok")
-	} else {
-		c.logTrace("XClient unable to proceed")
-
-		c.Write("421", "Bye bye")
-		c.server.killClient(c)
-	}
-
-	return
-}
-
 func (c *Client) processData() {
 	var msg string
 
@@ -929,8 +837,6 @@ func (c *Client) parseCmd(line string) (cmd string, arg string, ok bool) {
 	switch {
 	case strings.Index(line, "STARTTLS") == 0:
 		return "STARTTLS", "", true
-	case strings.Index(line, "XCLIENT") == 0:
-		return strings.ToUpper(line[0:7]), strings.ToUpper(line[8:]), true
 	case l == 0:
 		return "", "", true
 	case l < 4:
