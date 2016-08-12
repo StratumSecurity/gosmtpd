@@ -16,10 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/gleez/smtpd/config"
-	"github.com/gleez/smtpd/data"
-	"github.com/gleez/smtpd/log"
 )
 
 type State int
@@ -71,7 +67,7 @@ type SMTPConfig struct {
 
 // Real server code starts here
 type Server struct {
-	Store           *data.DataStore
+	outChan         chan<- Message
 	domain          string
 	maxRecips       int
 	maxIdleSeconds  int
@@ -131,7 +127,7 @@ func NewSmtpServer(cfg SMTPConfig, ds *data.DataStore) *Server {
 			allowedHosts[strings.Trim(arr[i], " ")] = true
 		}
 	}
-
+<-
 	// map the allow hosts for easy lookup
 	if arr := strings.Split(cfg.TrustedHosts, ","); len(arr) > 0 {
 		for i := 0; i < len(arr); i++ {
@@ -201,9 +197,6 @@ func (s *Server) Start() {
 		s.Stop()
 		return
 	}
-
-	//Connect database
-	s.Store.StorageConnect()
 
 	var tempDelay time.Duration
 	var clientId int64
@@ -330,6 +323,60 @@ func (s *Server) handleClient(c *Client) {
 	}
 
 	c.logInfo("Closing connection")
+}
+
+// TODO support nested MIME content
+func (c *Client) ParseMessage(mimeParser bool) *Message {
+	arr := make([]*Path, 0)
+	for _, path := range c.recipients {
+		arr = append(arr, PathFromString(path))
+	}
+
+	msg := &Message{
+		From:    PathFromString(c.from),
+		To:      arr,
+		Created: time.Now(),
+		Ip:      c.remoteHost,
+		Unread:  true,
+		Starred: false,
+	}
+
+	if mimeParser {
+		msg.Content = &Content{Size: len(c.data), Headers: make(map[string][]string, 0), Body: c.data}
+		// Read mail using standard mail package
+		if rm, err := mail.ReadMessage(bytes.NewBufferString(c.data)); err == nil {
+			log.LogTrace("Reading Mail Message")
+			msg.Content.Size = len(c.data)
+			msg.Content.Headers = rm.Header
+			msg.Subject = MimeHeaderDecode(rm.Header.Get("Subject"))
+
+			if mt, p, err := mime.ParseMediaType(rm.Header.Get("Content-Type")); err == nil {
+				if strings.HasPrefix(mt, "multipart/") {
+					log.LogTrace("Parsing MIME Message")
+					MIMEBody := &MIMEBody{Parts: make([]*MIMEPart, 0)}
+					if err := ParseMIME(MIMEBody, rm.Body, p["boundary"], msg); err == nil {
+						log.LogTrace("Got multiparts %d", len(MIMEBody.Parts))
+						msg.MIME = MIMEBody
+					}
+				} else {
+					setMailBody(rm, msg)
+				}
+			} else {
+				setMailBody(rm, msg)
+			}
+		} else {
+			msg.Content.TextBody = c.data
+		}
+	} else {
+		msg.Content = ContentFromString(c.data)
+	}
+
+	recd := fmt.Sprintf("from %s ([%s]) by %s (Smtpd)\r\n  for <%s>; %s\r\n", c.helo, c.remoteHost, c.server.domain, msg.Id+"@"+c.server.domain, time.Now().Format(time.RFC1123Z))
+	//msg.Content.Headers["Delivered-To"]  = []string{msg.To}
+	msg.Content.Headers["Message-ID"] = []string{msg.Id + "@" + c.server.domain}
+	msg.Content.Headers["Received"] = []string{recd}
+	msg.Content.Headers["Return-Path"] = []string{"<" + c.from + ">"}
+	return msg
 }
 
 // Commands are dispatched to the appropriate handler functions.
@@ -460,12 +507,6 @@ func (c *Client) mailHandler(cmd string, arg string) {
 			return
 		}
 
-		if c.server.FromGreyList && c.server.Store.CheckGreyMail("from", mailbox, domain, c.remoteHost) {
-			c.Write("501", "Bad sender address syntax")
-			c.logWarn("Greylist address MAIL arg: %s, %v", from, err)
-			return
-		}
-
 		// This is where the client may put BODY=8BITMIME, but we already
 		// read the DATA as bytes, so it does not effect our processing.
 		if m[2] != "" {
@@ -525,12 +566,6 @@ func (c *Client) rcptHandler(cmd string, arg string) {
 		if !c.server.allowedHosts[host] && !c.trusted {
 			c.logWarn("Domain not allowed: <%s>", host)
 			c.Write("510", "Recipient address not allowed")
-			return
-		}
-
-		if c.server.RcptGreyList && c.server.Store.CheckGreyMail("to", mailbox, host, c.remoteHost) {
-			c.Write("510", "Recipient address not allowed")
-			c.logWarn("Greylist address as RCPT arg: %s, %v", recip, err)
 			return
 		}
 
@@ -798,7 +833,6 @@ func (c *Client) processData() {
 			c.logWarn("Spam Received from <%s> email: ip:<%s>\n", c.from, c.remoteHost)
 			c.Write("250", "Ok")
 
-			go c.server.Store.SaveSpamIP(c.remoteHost, c.from)
 			c.reset()
 			c.server.closeClient(c)
 
@@ -806,21 +840,13 @@ func (c *Client) processData() {
 		}
 
 		if c.server.storeMessages {
-			// Create Message Structure
-			mc := &SMTPMessage{}
-			mc.Helo = c.helo
-			mc.From = c.from
-			mc.To = c.recipients
-			mc.Data = c.data
-			mc.Host = c.remoteHost
-			mc.Domain = c.server.domain
-			mc.Notify = make(chan int)
-
 			// Send to savemail channel
-			c.server.Store.SaveMailChan <- mc
+			// TODO - Get a mimeparser in here
+			c.server.outChan <- c.ParseMessage()
 
 			select {
 			// wait for the save to complete
+			// TODO - Remove notify
 			case status := <-mc.Notify:
 				if status == 1 {
 					c.Write("250", "Ok: queued as "+mc.Hash)
@@ -834,9 +860,6 @@ func (c *Client) processData() {
 				c.logError("Message save timeout")
 			}
 		} else {
-			//Notify web socket with timestamp
-			c.server.Store.NotifyMailChan <- time.Now().Unix()
-
 			// we dont store messages here, just deliver to hell
 			c.Write("250", "Mail accepted for delivery")
 			c.logInfo("Message size %v bytes", len(msg))

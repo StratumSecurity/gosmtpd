@@ -17,21 +17,9 @@ import (
 )
 
 // Used for message channel, avoids import cycle error
-type SMTPMessage struct {
-	From   string
-	To     []string
-	Data   string
-	Helo   string
-	Host   string
-	Domain string
-	Hash   string
-	Notify chan int
-}
-
 type Messages []Message
 
 type Message struct {
-	Id          string
 	Subject     string
 	From        *Path
 	To          []*Path
@@ -84,61 +72,6 @@ type Attachment struct {
 	MIMEVersion      string
 	TransferEncoding string
 	Size             int
-}
-
-// TODO support nested MIME content
-func ParseSMTPMessage(m *config.SMTPMessage, hostname string, mimeParser bool) *Message {
-	arr := make([]*Path, 0)
-	for _, path := range m.To {
-		arr = append(arr, PathFromString(path))
-	}
-
-	msg := &Message{
-		Id:      bson.NewObjectId().Hex(),
-		From:    PathFromString(m.From),
-		To:      arr,
-		Created: time.Now(),
-		Ip:      m.Host,
-		Unread:  true,
-		Starred: false,
-	}
-
-	if mimeParser {
-		msg.Content = &Content{Size: len(m.Data), Headers: make(map[string][]string, 0), Body: m.Data}
-		// Read mail using standard mail package
-		if rm, err := mail.ReadMessage(bytes.NewBufferString(m.Data)); err == nil {
-			log.LogTrace("Reading Mail Message")
-			msg.Content.Size = len(m.Data)
-			msg.Content.Headers = rm.Header
-			msg.Subject = MimeHeaderDecode(rm.Header.Get("Subject"))
-
-			if mt, p, err := mime.ParseMediaType(rm.Header.Get("Content-Type")); err == nil {
-				if strings.HasPrefix(mt, "multipart/") {
-					log.LogTrace("Parsing MIME Message")
-					MIMEBody := &MIMEBody{Parts: make([]*MIMEPart, 0)}
-					if err := ParseMIME(MIMEBody, rm.Body, p["boundary"], msg); err == nil {
-						log.LogTrace("Got multiparts %d", len(MIMEBody.Parts))
-						msg.MIME = MIMEBody
-					}
-				} else {
-					setMailBody(rm, msg)
-				}
-			} else {
-				setMailBody(rm, msg)
-			}
-		} else {
-			msg.Content.TextBody = m.Data
-		}
-	} else {
-		msg.Content = ContentFromString(m.Data)
-	}
-
-	recd := fmt.Sprintf("from %s ([%s]) by %s (Smtpd)\r\n  for <%s>; %s\r\n", m.Helo, m.Host, hostname, msg.Id+"@"+hostname, time.Now().Format(time.RFC1123Z))
-	//msg.Content.Headers["Delivered-To"]  = []string{msg.To}
-	msg.Content.Headers["Message-ID"] = []string{msg.Id + "@" + hostname}
-	msg.Content.Headers["Received"] = []string{recd}
-	msg.Content.Headers["Return-Path"] = []string{"<" + m.From + ">"}
-	return msg
 }
 
 // db.messages.find({ to:{ $elemMatch: { mailbox:"bob" } } })
