@@ -841,8 +841,8 @@ func (c *Client) processData() {
 
 		if c.server.storeMessages {
 			// Send to savemail channel
-			// TODO - Get a mimeparser in here
-			c.server.outChan <- c.ParseMessage()
+			// TODO - Figure out a way to make this mimeparser=true parameter configurable
+			c.server.outChan <- c.ParseMessage(true)
 
 			select {
 			// wait for the save to complete
