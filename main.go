@@ -27,7 +27,6 @@ func main() {
 		PrvKey:          "",
 		Debug:           false,
 		DebugPath:       "",
-		SpamRegex:       "",
 	})
 	server.Start()
 	server.Drain()
