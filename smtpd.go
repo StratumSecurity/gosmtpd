@@ -208,8 +208,6 @@ func (s *Server) Start() {
 	addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%v:%v", s.listenAddr, s.listenPort))
 	if err != nil {
 		fmt.Printf("Failed to build tcp4 address: %v\n", err)
-		// TODO More graceful early-shutdown procedure
-		//panic(err)
 		s.Stop()
 		return
 	}
@@ -219,8 +217,6 @@ func (s *Server) Start() {
 	s.listener, err = net.ListenTCP("tcp4", addr)
 	if err != nil {
 		fmt.Printf("SMTP failed to start tcp4 listener: %v\n", err)
-		// TODO More graceful early-shutdown procedure
-		//panic(err)
 		s.Stop()
 		return
 	}
@@ -946,17 +942,6 @@ func (c *Client) logError(msg string, args ...interface{}) {
 	fmt.Printf("SMTP[%v]<%v> %v\n", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
-func parseHelloArgument(arg string) (string, error) {
-	domain := arg
-	if idx := strings.IndexRune(arg, ' '); idx >= 0 {
-		domain = arg[:idx]
-	}
-	if domain == "" {
-		return "", fmt.Errorf("Invalid domain")
-	}
-	return domain, nil
-}
-
 // Debug mail data to file
 func (c *Client) saveMailDatatoFile(msg string) {
 	filename := fmt.Sprintf("%s/%s-%s-%s.raw", c.server.DebugPath, c.remoteHost, c.from, time.Now().Format("Jan-2-2006-3:04:00pm"))
@@ -972,4 +957,15 @@ func (c *Client) saveMailDatatoFile(msg string) {
 	if err != nil {
 		fmt.Printf("Error saving file %v: %v\n", n, err)
 	}
+}
+
+func parseHelloArgument(arg string) (string, error) {
+	domain := arg
+	if idx := strings.IndexRune(arg, ' '); idx >= 0 {
+		domain = arg[:idx]
+	}
+	if domain == "" {
+		return "", fmt.Errorf("Invalid domain")
+	}
+	return domain, nil
 }
