@@ -28,7 +28,6 @@ import (
 // Defaults for server configuration options
 const (
 	DefaultDomain         = "local"
-	DefaultTrustedHosts   = ""
 	DefaultMaxRecipients  = 100
 	DefaultMaxIdleSeconds = 300
 	DefaultMaxClients     = 500
@@ -58,9 +57,13 @@ var commands = map[string]bool{
 }
 
 // PermissionManager is an interface that should be implemented by users of this library
-// to provide customized functionality for determining whether a host is allowed to send
-// emails to a Server.
+// to provide customized functionality for determining whether a client is trusted to
+// send emails to the server and if the specified recipient is allowed.
 type PermissionManager interface {
+	// Determine, given a client's connecting IP, whether that client is trusted to send emails.
+	IsTrusted(string) bool
+	// Determine, given a recipient email domain, whether clients are allowed
+	// to send emails to addresses at that domain.
 	IsAllowed(string) bool
 }
 
@@ -156,8 +159,6 @@ type Server struct {
 	shutdown        bool
 	waitgroup       *sync.WaitGroup
 	timeout         time.Duration
-	allowedHosts    map[string]bool
-	trustedHosts    map[string]bool
 	maxClients      int
 	useTLS          bool
 	TLSConfig       tls.Config
@@ -194,6 +195,12 @@ type Client struct {
 // and of the client filtering a production system would want to do.
 type allowOnlyLocalhost struct{}
 
+// Trust only clients connecting via localhost to send emails.
+func (a allowOnlyLocalhost) IsTrusted(clientIP string) bool {
+	return clientIP == "localhost" || clientIP == "127.0.0.1"
+}
+
+// Allow clients only to send emails to localhost.
 func (a allowOnlyLocalhost) IsAllowed(host string) bool {
 	return host == "localhost" || host == "127.0.0.1"
 }
@@ -223,16 +230,6 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 		cfg.MaxMessageBytes = DefaultMaxMsgBytes
 	}
 
-	var allowedHosts = make(map[string]bool, 15)
-	var trustedHosts = make(map[string]bool, 15)
-
-	// map the allow hosts for easy lookup
-	if arr := strings.Split(cfg.TrustedHosts, ","); len(arr) > 0 {
-		for i := 0; i < len(arr); i++ {
-			trustedHosts[net.ParseIP(arr[i]).String()] = true
-		}
-	}
-
 	// sem is an active clients channel used for counting clients
 	maxClients := make(chan int, cfg.MaxClients)
 
@@ -245,8 +242,6 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 		maxIdleSeconds:  cfg.MaxIdleSeconds,
 		maxMessageBytes: cfg.MaxMessageBytes,
 		waitgroup:       new(sync.WaitGroup),
-		allowedHosts:    allowedHosts,
-		trustedHosts:    trustedHosts,
 		sem:             maxClients,
 	}
 
@@ -379,7 +374,7 @@ func (s *Server) handleClient(permissionChecker PermissionManager, c *Client) {
 	c.greet()
 
 	// check if client on trusted hosts
-	if s.trustedHosts[net.ParseIP(c.remoteHost).String()] {
+	if permissionChecker.IsTrusted(net.ParseIP(c.remoteHost).String()) {
 		c.logInfo("Remote Client is Trusted: <%s>", c.remoteHost)
 		c.trusted = true
 	}
@@ -664,7 +659,6 @@ func (c *Client) rcptHandler(cmd string, arg string, permissionChecker Permissio
 		host := strings.Split(addr.Address, "@")[1]
 
 		// check if on allowed hosts if client ip not trusted
-		//if !c.server.allowedHosts[host] && !c.trusted {
 		if !permissionChecker.IsAllowed(host) && !c.trusted {
 			c.logWarn("Domain not allowed: <%s>", host)
 			c.Write("510", "Recipient address not allowed")

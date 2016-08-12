@@ -6,6 +6,10 @@ import (
 
 type allowAll struct{}
 
+func (a allowAll) IsTrusted(s string) bool {
+	return true
+}
+
 func (a allowAll) IsAllowed(s string) bool {
 	return true
 }
