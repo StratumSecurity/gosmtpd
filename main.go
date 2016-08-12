@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 )
 
 func handleMessages(in <-chan Message) {
@@ -15,7 +14,7 @@ func handleMessages(in <-chan Message) {
 func main() {
 	messages := make(chan Message)
 	server := NewServer(messages, SMTPConfig{
-		Ip4address:      net.ParseIP("127.0.0.1"),
+		Ip4address:      "127.0.0.1",
 		Ip4port:         25,
 		Domain:          "local",
 		AllowedHosts:    "localhost",

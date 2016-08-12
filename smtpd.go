@@ -5,10 +5,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"mime"
 	"net"
+	"net/mail"
 	"os"
 	"regexp"
 	"runtime"
@@ -44,7 +48,7 @@ var commands = map[string]bool{
 // SMTPConfig houses the SMTP server configuration - not using pointers
 // so that I can pass around copies of the object safely.
 type SMTPConfig struct {
-	Ip4address      net.IP
+	Ip4address      string
 	Ip4port         int
 	Domain          string
 	AllowedHosts    string
@@ -63,6 +67,8 @@ type SMTPConfig struct {
 // Real server code starts here
 type Server struct {
 	outChan         chan<- Message
+	listenAddr      string
+	listenPort      int
 	domain          string
 	maxRecips       int
 	maxIdleSeconds  int
@@ -76,7 +82,8 @@ type Server struct {
 	trustedHosts    map[string]bool
 	maxClients      int
 	EnableXCLIENT   bool
-	TLSConfig       *tls.Config
+	UseTLS          bool
+	TLSConfig       tls.Config
 	ForceTLS        bool
 	Debug           bool
 	DebugPath       string
@@ -109,7 +116,7 @@ type Client struct {
 }
 
 // Init a new Client object
-func NewSmtpServer(cfg SMTPConfig, output chan<- Message) *Server {
+func NewServer(output chan<- Message, cfg SMTPConfig) *Server {
 	var allowedHosts = make(map[string]bool, 15)
 	var trustedHosts = make(map[string]bool, 15)
 
@@ -129,8 +136,10 @@ func NewSmtpServer(cfg SMTPConfig, output chan<- Message) *Server {
 	// sem is an active clients channel used for counting clients
 	maxClients := make(chan int, cfg.MaxClients)
 
-	return &Server{
+	s := &Server{
 		outChan:         output,
+		listenAddr:      cfg.Ip4address,
+		listenPort:      cfg.Ip4port,
 		domain:          cfg.Domain,
 		maxRecips:       cfg.MaxRecipients,
 		maxIdleSeconds:  cfg.MaxIdleSeconds,
@@ -143,6 +152,21 @@ func NewSmtpServer(cfg SMTPConfig, output chan<- Message) *Server {
 		sem:             maxClients,
 		SpamRegex:       cfg.SpamRegex,
 	}
+
+	fmt.Printf("Loading the certificate: %s", cfg.PubKey)
+	cert, err := tls.LoadX509KeyPair(cfg.PubKey, cfg.PrvKey)
+	if err != nil {
+		fmt.Printf("There was a problem with loading the certificate: %s", err)
+	} else {
+		s.TLSConfig = tls.Config{
+			Certificates: []tls.Certificate{cert},
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+			ServerName:   s.domain,
+		}
+		s.UseTLS = true
+		//s.TLSConfig  .Rand = rand.Reader
+	}
+	return s
 }
 
 func (s *Server) WriteMessage(msg Message) {
@@ -151,26 +175,11 @@ func (s *Server) WriteMessage(msg Message) {
 
 // Main listener loop
 func (s *Server) Start() {
-	cfg := config.GetSMTPConfig()
-
-	log.LogTrace("Loading the certificate: %s", cfg.PubKey)
-	cert, err := tls.LoadX509KeyPair(cfg.PubKey, cfg.PrvKey)
-
-	if err != nil {
-		log.LogError("There was a problem with loading the certificate: %s", err)
-	} else {
-		s.TLSConfig = &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			ClientAuth:   tls.VerifyClientCertIfGiven,
-			ServerName:   cfg.Domain,
-		}
-		//s.TLSConfig  .Rand = rand.Reader
-	}
 
 	defer s.Stop()
-	addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%v:%v", cfg.Ip4address, cfg.Ip4port))
+	addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%v:%v", s.listenAddr, s.listenPort))
 	if err != nil {
-		log.LogError("Failed to build tcp4 address: %v", err)
+		fmt.Printf("Failed to build tcp4 address: %v", err)
 		// TODO More graceful early-shutdown procedure
 		//panic(err)
 		s.Stop()
@@ -178,10 +187,10 @@ func (s *Server) Start() {
 	}
 
 	// Start listening for SMTP connections
-	log.LogInfo("SMTP listening on TCP4 %v", addr)
+	fmt.Printf("SMTP listening on TCP4 %v", addr)
 	s.listener, err = net.ListenTCP("tcp4", addr)
 	if err != nil {
-		log.LogError("SMTP failed to start tcp4 listener: %v", err)
+		fmt.Printf("SMTP failed to start tcp4 listener: %v", err)
 		// TODO More graceful early-shutdown procedure
 		//panic(err)
 		s.Stop()
@@ -204,12 +213,12 @@ func (s *Server) Start() {
 				if max := 1 * time.Second; tempDelay > max {
 					tempDelay = max
 				}
-				log.LogError("SMTP accept error: %v; retrying in %v", err, tempDelay)
+				fmt.Printf("SMTP accept error: %v; retrying in %v", err, tempDelay)
 				time.Sleep(tempDelay)
 				continue
 			} else {
 				if s.shutdown {
-					log.LogTrace("SMTP listener shutting down on request")
+					fmt.Printf("SMTP listener shutting down on request")
 					return
 				}
 				// TODO Implement a max error counter before shutdown?
@@ -219,7 +228,7 @@ func (s *Server) Start() {
 		} else {
 			tempDelay = 0
 			s.waitgroup.Add(1)
-			log.LogInfo("There are now %s serving goroutines", strconv.Itoa(runtime.NumGoroutine()))
+			fmt.Printf("There are now %s serving goroutines", strconv.Itoa(runtime.NumGoroutine()))
 			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 			s.sem <- 1 // Wait for active queue to drain.
@@ -239,7 +248,7 @@ func (s *Server) Start() {
 
 // Stop requests the SMTP server closes it's listener
 func (s *Server) Stop() {
-	log.LogTrace("SMTP shutdown requested, connections will be drained")
+	fmt.Printf("SMTP shutdown requested, connections will be drained")
 	s.shutdown = true
 	s.listener.Close()
 }
@@ -247,7 +256,7 @@ func (s *Server) Stop() {
 // Drain causes the caller to block until all active SMTP sessions have finished
 func (s *Server) Drain() {
 	s.waitgroup.Wait()
-	log.LogTrace("SMTP connections drained")
+	fmt.Printf("SMTP connections drained")
 }
 
 func (s *Server) closeClient(c *Client) {
@@ -262,7 +271,7 @@ func (s *Server) killClient(c *Client) {
 }
 
 func (s *Server) handleClient(c *Client) {
-	log.LogInfo("SMTP Connection from %v, starting session <%v>", c.conn.RemoteAddr(), c.id)
+	fmt.Printf("SMTP Connection from %v, starting session <%v>", c.conn.RemoteAddr(), c.id)
 
 	defer func() {
 		s.closeClient(c)
@@ -316,13 +325,13 @@ func (s *Server) handleClient(c *Client) {
 }
 
 // TODO support nested MIME content
-func (c *Client) ParseMessage(mimeParser bool) *Message {
+func (c *Client) ParseMessage(mimeParser bool) Message {
 	arr := make([]*Path, 0)
 	for _, path := range c.recipients {
 		arr = append(arr, PathFromString(path))
 	}
 
-	msg := &Message{
+	msg := Message{
 		From:    PathFromString(c.from),
 		To:      arr,
 		Created: time.Now(),
@@ -335,24 +344,24 @@ func (c *Client) ParseMessage(mimeParser bool) *Message {
 		msg.Content = &Content{Size: len(c.data), Headers: make(map[string][]string, 0), Body: c.data}
 		// Read mail using standard mail package
 		if rm, err := mail.ReadMessage(bytes.NewBufferString(c.data)); err == nil {
-			log.LogTrace("Reading Mail Message")
+			fmt.Printf("Reading Mail Message")
 			msg.Content.Size = len(c.data)
 			msg.Content.Headers = rm.Header
 			msg.Subject = MimeHeaderDecode(rm.Header.Get("Subject"))
 
 			if mt, p, err := mime.ParseMediaType(rm.Header.Get("Content-Type")); err == nil {
 				if strings.HasPrefix(mt, "multipart/") {
-					log.LogTrace("Parsing MIME Message")
+					fmt.Printf("Parsing MIME Message")
 					MIMEBody := &MIMEBody{Parts: make([]*MIMEPart, 0)}
-					if err := ParseMIME(MIMEBody, rm.Body, p["boundary"], msg); err == nil {
-						log.LogTrace("Got multiparts %d", len(MIMEBody.Parts))
+					if err := ParseMIME(MIMEBody, rm.Body, p["boundary"], &msg); err == nil {
+						fmt.Printf("Got multiparts %d", len(MIMEBody.Parts))
 						msg.MIME = MIMEBody
 					}
 				} else {
-					setMailBody(rm, msg)
+					setMailBody(rm, &msg)
 				}
 			} else {
-				setMailBody(rm, msg)
+				setMailBody(rm, &msg)
 			}
 		} else {
 			msg.Content.TextBody = c.data
@@ -361,9 +370,14 @@ func (c *Client) ParseMessage(mimeParser bool) *Message {
 		msg.Content = ContentFromString(c.data)
 	}
 
-	recd := fmt.Sprintf("from %s ([%s]) by %s (Smtpd)\r\n  for <%s>; %s\r\n", c.helo, c.remoteHost, c.server.domain, msg.Id+"@"+c.server.domain, time.Now().Format(time.RFC1123Z))
+	randomID := make([]byte, 16)
+	rand.Read(randomID)
+	hexStr := hex.EncodeToString(randomID)
+	recd := fmt.Sprintf(
+		"from %s ([%s]) by %s (Smtpd)\r\n  for <%s>; %s\r\n",
+		c.helo, c.remoteHost, c.server.domain, hexStr+"@"+c.server.domain, time.Now().Format(time.RFC1123Z))
 	//msg.Content.Headers["Delivered-To"]  = []string{msg.To}
-	msg.Content.Headers["Message-ID"] = []string{msg.Id + "@" + c.server.domain}
+	msg.Content.Headers["Message-ID"] = []string{hexStr + "@" + c.server.domain}
 	msg.Content.Headers["Received"] = []string{recd}
 	msg.Content.Headers["Return-Path"] = []string{"<" + c.from + ">"}
 	return msg
@@ -458,7 +472,7 @@ func (c *Client) greetHandler(cmd string, arg string) {
 			return
 		}
 
-		if c.server.TLSConfig != nil && !c.tls_on {
+		if c.server.UseTLS && !c.tls_on {
 			c.Write("250", "Hello "+domain+"["+c.remoteHost+"]", "PIPELINING", "8BITMIME", "STARTTLS", "AUTH EXTERNAL CRAM-MD5 LOGIN PLAIN", fmt.Sprintf("SIZE %v", c.server.maxMessageBytes))
 			//c.Write("250", "Hello "+domain+"["+c.remoteHost+"]", "8BITMIME", fmt.Sprintf("SIZE %v", c.server.maxMessageBytes), "HELP")
 		} else {
@@ -490,7 +504,7 @@ func (c *Client) mailHandler(cmd string, arg string) {
 		}
 
 		from := m[1]
-		mailbox, domain, err := ParseEmailAddress(from)
+		_, _, err := ParseEmailAddress(from)
 		if err != nil {
 			c.Write("501", "Bad sender address syntax")
 			c.logWarn("Bad address as MAIL arg: %q, %s", from, err)
@@ -545,7 +559,7 @@ func (c *Client) rcptHandler(cmd string, arg string) {
 
 		// This trim is probably too forgiving
 		recip := strings.Trim(arg[3:], "<> ")
-		mailbox, host, err := ParseEmailAddress(recip)
+		_, host, err := ParseEmailAddress(recip)
 		if err != nil {
 			c.Write("501", "Bad recipient address syntax")
 			c.logWarn("Bad address as RCPT arg: %q, %s", recip, err)
@@ -624,17 +638,17 @@ func (c *Client) tlsHandler() {
 		return
 	}
 
-	if c.server.TLSConfig == nil {
+	if !c.server.UseTLS {
 		c.Write("502", "TLS not supported")
 		return
 	}
 
-	log.LogTrace("Ready to start TLS")
+	fmt.Printf("Ready to start TLS")
 	c.Write("220", "Ready to start TLS")
 
 	// upgrade to TLS
 	var tlsConn *tls.Conn
-	tlsConn = tls.Server(c.conn, c.server.TLSConfig)
+	tlsConn = tls.Server(c.conn, &c.server.TLSConfig)
 	err := tlsConn.Handshake() // not necessary to call here, but might as well
 
 	if err == nil {
@@ -833,22 +847,8 @@ func (c *Client) processData() {
 			// Send to savemail channel
 			// TODO - Figure out a way to make this mimeparser=true parameter configurable
 			c.server.WriteMessage(c.ParseMessage(true))
-
-			select {
-			// wait for the save to complete
-			// TODO - Remove notify
-			case status := <-mc.Notify:
-				if status == 1 {
-					c.Write("250", "Ok: queued as "+mc.Hash)
-					c.logInfo("Message size %v bytes", len(msg))
-				} else {
-					c.Write("554", "Error: transaction failed, blame it on the weather")
-					c.logError("Message save failed")
-				}
-			case <-time.After(time.Second * 60):
-				c.Write("554", "Error: transaction failed, blame it on the weather")
-				c.logError("Message save timeout")
-			}
+			c.Write("250", "Ok: queued")
+			c.logInfo("Message size %v bytes", len(msg))
 		} else {
 			// we dont store messages here, just deliver to hell
 			c.Write("250", "Mail accepted for delivery")
@@ -1009,23 +1009,23 @@ func (c *Client) ooSeq(cmd string) {
 
 // Session specific logging methods
 func (c *Client) logTrace(msg string, args ...interface{}) {
-	log.LogTrace("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
+	fmt.Printf("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
 func (c *Client) logInfo(msg string, args ...interface{}) {
-	log.LogInfo("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
+	fmt.Printf("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
 func (c *Client) logWarn(msg string, args ...interface{}) {
 	// Update metrics
 	//expWarnsTotal.Add(1)
-	log.LogWarn("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
+	fmt.Printf("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
 func (c *Client) logError(msg string, args ...interface{}) {
 	// Update metrics
 	//expErrorsTotal.Add(1)
-	log.LogError("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
+	fmt.Printf("SMTP[%v]<%v> %v", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
 func parseHelloArgument(arg string) (string, error) {
@@ -1045,13 +1045,13 @@ func (c *Client) saveMailDatatoFile(msg string) {
 	f, err := os.Create(filename)
 
 	if err != nil {
-		log.LogError("Error saving file %v", err)
+		fmt.Printf("Error saving file %v", err)
 	}
 
 	defer f.Close()
 	n, err := io.WriteString(f, msg)
 
 	if err != nil {
-		log.LogError("Error saving file %v: %v", n, err)
+		fmt.Printf("Error saving file %v: %v", n, err)
 	}
 }

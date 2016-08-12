@@ -64,7 +64,6 @@ type MIMEPart struct {
 }
 
 type Attachment struct {
-	Id               string
 	Body             string
 	FileName         string
 	ContentType      string
@@ -171,10 +170,9 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 
 				// Save attachments
 				if disposition == "attachment" && len(part.FileName) > 0 {
-					log.LogTrace("Found attachment: '%s'", disposition)
+					fmt.Printf("Found attachment: '%s'", disposition)
 					//db.messages.find({ 'attachments.id': "54200a938b1864264c000005" }, {"attachments.$" : 1})
 					attachment := &Attachment{
-						Id:               bson.NewObjectId().Hex(),
 						Body:             string(body),
 						FileName:         part.FileName,
 						Charset:          part.Charset,
@@ -197,7 +195,7 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 					message.Content.HtmlBody = MimeBodyDecode(string(body), part.Charset, part.TransferEncoding)
 				}
 			} else {
-				log.LogError("Error Processing MIME message: <%s>", err)
+				fmt.Printf("Error Processing MIME message: <%s>", err)
 			}
 		}
 	}
@@ -206,7 +204,7 @@ func ParseMIME(MIMEBody *MIMEBody, reader io.Reader, boundary string, message *M
 }
 
 func ContentFromString(data string) *Content {
-	log.LogTrace("Parsing Content from string: <%d>", len(data))
+	fmt.Printf("Parsing Content from string: <%d>", len(data))
 	x := strings.SplitN(data, "\r\n\r\n", 2)
 	h := make(map[string][]string, 0)
 
@@ -224,7 +222,7 @@ func ContentFromString(data string) *Content {
 				h[key] = []string{value}
 				lastHdr = key
 			} else {
-				log.LogWarn("Found invalid header: '%s'", hdr)
+				fmt.Printf("Found invalid header: '%s'", hdr)
 			}
 		}
 		//log.LogTrace("Found body: '%s'", body)
