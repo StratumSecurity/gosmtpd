@@ -161,8 +161,7 @@ type Server struct {
 	timeout         time.Duration
 	maxClients      int
 	useTLS          bool
-	TLSConfig       tls.Config
-	ForceTLS        bool
+	tlsConfig       tls.Config
 	sem             chan int // currently active clients
 }
 
@@ -247,13 +246,13 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	if err != nil {
 		fmt.Printf("There was a problem with loading the certificate: %s\n", err)
 	} else {
-		s.TLSConfig = tls.Config{
+		s.tlsConfig = tls.Config{
 			Certificates: []tls.Certificate{cert},
 			ClientAuth:   tls.VerifyClientCertIfGiven,
 			ServerName:   s.domain,
 		}
 		s.useTLS = true
-		//s.TLSConfig  .Rand = rand.Reader
+		//s.tlsConfig  .Rand = rand.Reader
 	}
 	return s
 }
@@ -736,7 +735,7 @@ func (c *client) tlsHandler() {
 
 	// upgrade to TLS
 	var tlsConn *tls.Conn
-	tlsConn = tls.Server(c.conn, &c.server.TLSConfig)
+	tlsConn = tls.Server(c.conn, &c.server.tlsConfig)
 	err := tlsConn.Handshake() // not necessary to call here, but might as well
 
 	if err == nil {
