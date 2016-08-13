@@ -167,7 +167,7 @@ type Server struct {
 }
 
 // Client contains information about a client sending an email to a Server.
-type Client struct {
+type client struct {
 	server     *Server
 	state      state
 	helo       string
@@ -213,9 +213,6 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 	// Apply defaults to any fields that were left out of the config
 	if cfg.Domain == "" {
 		cfg.Domain = DefaultDomain
-	}
-	if cfg.TrustedHosts == "" {
-		cfg.TrustedHosts = DefaultTrustedHosts
 	}
 	if cfg.MaxRecipients == 0 {
 		cfg.MaxRecipients = DefaultMaxRecipients
@@ -325,7 +322,7 @@ func (s *Server) Start(permissionChecker PermissionManager) {
 			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 			s.sem <- 1 // Wait for active queue to drain.
-			go s.handleClient(permissionChecker, &Client{
+			go s.handleClient(permissionChecker, &client{
 				state:      1,
 				server:     s,
 				conn:       conn,
@@ -352,18 +349,18 @@ func (s *Server) Drain() {
 	fmt.Printf("SMTP connections drained\n")
 }
 
-func (s *Server) closeClient(c *Client) {
+func (s *Server) closeClient(c *client) {
 	c.bufout.Flush()
 	time.Sleep(200 * time.Millisecond)
 	c.conn.Close()
 	<-s.sem // Done; enable next client to run.
 }
 
-func (s *Server) killClient(c *Client) {
+func (s *Server) killClient(c *client) {
 	c.killTime = time.Now().Unix()
 }
 
-func (s *Server) handleClient(permissionChecker PermissionManager, c *Client) {
+func (s *Server) handleClient(permissionChecker PermissionManager, c *client) {
 	fmt.Printf("SMTP Connection from %v, starting session <%v>\n", c.conn.RemoteAddr(), c.id)
 
 	defer func() {
@@ -418,7 +415,7 @@ func (s *Server) handleClient(permissionChecker PermissionManager, c *Client) {
 }
 
 // TODO support nested MIME content
-func (c *Client) parseMessage(mimeParser bool) Message {
+func (c *client) parseMessage(mimeParser bool) Message {
 	var arr []*Path
 	for _, path := range c.recipients {
 		arr = append(arr, pathFromString(path))
@@ -477,7 +474,7 @@ func (c *Client) parseMessage(mimeParser bool) Message {
 }
 
 // Commands are dispatched to the appropriate handler functions.
-func (c *Client) handle(cmd string, arg string, line string, permissionChecker PermissionManager) {
+func (c *client) handle(cmd string, arg string, line string, permissionChecker PermissionManager) {
 	c.logTrace("In state %d, got command '%s', args '%s'", c.state, cmd, arg)
 
 	// Check against valid SMTP commands
@@ -545,7 +542,7 @@ func (c *Client) handle(cmd string, arg string, line string, permissionChecker P
 }
 
 // GREET state -> waiting for HELO
-func (c *Client) greetHandler(cmd string, arg string) {
+func (c *client) greetHandler(cmd string, arg string) {
 	switch cmd {
 	case "HELO":
 		domain, err := parseHelloArgument(arg)
@@ -577,7 +574,7 @@ func (c *Client) greetHandler(cmd string, arg string) {
 }
 
 // READY state -> waiting for MAIL
-func (c *Client) mailHandler(cmd string, arg string) {
+func (c *client) mailHandler(cmd string, arg string) {
 	if cmd == "MAIL" {
 		if c.helo == "" {
 			c.Write("502", "Please introduce yourself first.")
@@ -635,7 +632,7 @@ func (c *Client) mailHandler(cmd string, arg string) {
 }
 
 // MAIL state -> waiting for RCPTs followed by DATA
-func (c *Client) rcptHandler(cmd string, arg string, permissionChecker PermissionManager) {
+func (c *client) rcptHandler(cmd string, arg string, permissionChecker PermissionManager) {
 	if cmd == "RCPT" {
 		if c.from == "" {
 			c.Write("502", "Missing MAIL FROM command.")
@@ -679,7 +676,7 @@ func (c *Client) rcptHandler(cmd string, arg string, permissionChecker Permissio
 	c.ooSeq(cmd)
 }
 
-func (c *Client) authHandler(cmd string, arg string) {
+func (c *client) authHandler(cmd string, arg string) {
 	if cmd == "AUTH" {
 		if c.helo == "" {
 			c.Write("502", "Please introduce yourself first.")
@@ -723,7 +720,7 @@ func (c *Client) authHandler(cmd string, arg string) {
 	}
 }
 
-func (c *Client) tlsHandler() {
+func (c *client) tlsHandler() {
 	if c.tlsOn {
 		c.Write("502", "Already running in TLS")
 		return
@@ -765,7 +762,7 @@ func (c *Client) tlsHandler() {
 }
 
 // DATA
-func (c *Client) dataHandler(cmd string, arg string) {
+func (c *client) dataHandler(cmd string, arg string) {
 	c.logTrace("Enter dataHandler %d", c.state)
 
 	if arg != "" {
@@ -784,7 +781,7 @@ func (c *Client) dataHandler(cmd string, arg string) {
 	}
 }
 
-func (c *Client) processData() {
+func (c *client) processData() {
 	var msg string
 
 	for {
@@ -835,33 +832,33 @@ func (c *Client) processData() {
 	c.reset()
 }
 
-func (c *Client) reject() {
+func (c *client) reject() {
 	c.Write("421", "Too busy. Try again later.")
 	c.server.closeClient(c)
 }
 
-func (c *Client) enterState(state state) {
+func (c *client) enterState(state state) {
 	c.state = state
 	c.logTrace("Entering state %v", state)
 }
 
-func (c *Client) greet() {
+func (c *client) greet() {
 	c.Write("220", fmt.Sprintf("%v Gleez SMTP # %s (%s) %s", c.server.domain, strconv.FormatInt(c.id, 10), strconv.Itoa(len(c.server.sem)), time.Now().Format(time.RFC1123Z)))
 	c.state = 1
 }
 
-func (c *Client) flush() {
+func (c *client) flush() {
 	c.conn.SetWriteDeadline(c.nextDeadline())
 	c.bufout.Flush()
 	c.conn.SetReadDeadline(c.nextDeadline())
 }
 
 // Calculate the next read or write deadline based on maxIdleSeconds
-func (c *Client) nextDeadline() time.Time {
+func (c *client) nextDeadline() time.Time {
 	return time.Now().Add(time.Duration(c.server.maxIdleSeconds) * time.Second)
 }
 
-func (c *Client) Write(code string, text ...string) {
+func (c *client) Write(code string, text ...string) {
 	c.conn.SetDeadline(c.nextDeadline())
 	if len(text) == 1 {
 		c.logTrace(">> Sent %d bytes: %s >>", len(text[0]), text[0])
@@ -881,7 +878,7 @@ func (c *Client) Write(code string, text ...string) {
 
 // readByteLine reads a line of input into the provided buffer. Does
 // not reset the Buffer - please do so prior to calling.
-func (c *Client) readByteLine(buf *bytes.Buffer) error {
+func (c *client) readByteLine(buf *bytes.Buffer) error {
 	if err := c.conn.SetReadDeadline(c.nextDeadline()); err != nil {
 		return err
 	}
@@ -907,7 +904,7 @@ func (c *Client) readByteLine(buf *bytes.Buffer) error {
 }
 
 // Reads a line of input
-func (c *Client) readLine() (line string, err error) {
+func (c *client) readLine() (line string, err error) {
 	if err = c.conn.SetReadDeadline(c.nextDeadline()); err != nil {
 		return "", err
 	}
@@ -920,7 +917,7 @@ func (c *Client) readLine() (line string, err error) {
 	return line, nil
 }
 
-func (c *Client) parseCmd(line string) (cmd string, arg string, ok bool) {
+func (c *client) parseCmd(line string) (cmd string, arg string, ok bool) {
 	line = strings.TrimRight(line, "\r\n")
 	l := len(line)
 	switch {
@@ -954,7 +951,7 @@ func (c *Client) parseCmd(line string) (cmd string, arg string, ok bool) {
 // string:
 //		" BODY=8BITMIME SIZE=1024"
 // The leading space is mandatory.
-func (c *Client) parseArgs(arg string) (args map[string]string, ok bool) {
+func (c *client) parseArgs(arg string) (args map[string]string, ok bool) {
 	args = make(map[string]string)
 	re := regexp.MustCompile(" (\\w+)=(\\w+)")
 	pm := re.FindAllStringSubmatch(arg, -1)
@@ -969,34 +966,34 @@ func (c *Client) parseArgs(arg string) (args map[string]string, ok bool) {
 	return args, true
 }
 
-func (c *Client) reset() {
+func (c *client) reset() {
 	c.state = 1
 	c.from = ""
 	c.helo = ""
 	c.recipients = nil
 }
 
-func (c *Client) ooSeq(cmd string) {
+func (c *client) ooSeq(cmd string) {
 	c.Write("503", fmt.Sprintf("Command %v is out of sequence", cmd))
 	c.logWarn("Wasn't expecting %v here", cmd)
 }
 
 // Session specific logging methods
-func (c *Client) logTrace(msg string, args ...interface{}) {
+func (c *client) logTrace(msg string, args ...interface{}) {
 	fmt.Printf("SMTP[%v]<%v> %v\n", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
-func (c *Client) logInfo(msg string, args ...interface{}) {
+func (c *client) logInfo(msg string, args ...interface{}) {
 	fmt.Printf("SMTP[%v]<%v> %v\n", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
-func (c *Client) logWarn(msg string, args ...interface{}) {
+func (c *client) logWarn(msg string, args ...interface{}) {
 	// Update metrics
 	//expWarnsTotal.Add(1)
 	fmt.Printf("SMTP[%v]<%v> %v\n", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
 }
 
-func (c *Client) logError(msg string, args ...interface{}) {
+func (c *client) logError(msg string, args ...interface{}) {
 	// Update metrics
 	//expErrorsTotal.Add(1)
 	fmt.Printf("SMTP[%v]<%v> %v\n", c.remoteHost, c.id, fmt.Sprintf(msg, args...))
