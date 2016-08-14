@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/alexcesaro/mail/quotedprintable"
-	"github.com/sloonz/go-iconv"
+	"gopkg.in/iconv.v1"
 )
 
 // Defaults for server configuration options
@@ -1196,12 +1196,12 @@ func mimeHeaderDecode(str string) string {
 	if err == nil && charset != "UTF-8" {
 		charset = fixCharset(charset)
 		// eg. charset can be "ISO-2022-JP"
-		convstr, err := iconv.Conv(str, "UTF-8", charset)
-		if err == nil {
-			return convstr
+		converter, err := iconv.Open("UTF-8", charset)
+		if err != nil {
+			return str
 		}
+		return converter.ConvertString(str)
 	}
-
 	return str
 }
 
@@ -1227,11 +1227,12 @@ func mimeBodyDecode(str string, charset string, encoding string) string {
 	if charset != "UTF-8" {
 		charset = fixCharset(charset)
 		// eg. charset can be "ISO-2022-JP"
-		if convstr, err := iconv.Conv(str, "UTF-8", charset); err == nil {
-			return convstr
+		converter, err := iconv.Open("UTF-8", charset)
+		if err != nil {
+			return str
 		}
+		return converter.ConvertString(str)
 	}
-
 	return str
 }
 
