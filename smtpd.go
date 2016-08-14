@@ -1200,7 +1200,7 @@ func mimeHeaderDecode(str string) string {
 		if err != nil {
 			return str
 		}
-		return converter.ConvertString(str)
+		return converter.ConvString(str)
 	}
 	return str
 }
@@ -1231,7 +1231,7 @@ func mimeBodyDecode(str string, charset string, encoding string) string {
 		if err != nil {
 			return str
 		}
-		return converter.ConvertString(str)
+		return converter.ConvString(str)
 	}
 	return str
 }
