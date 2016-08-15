@@ -205,7 +205,6 @@ type ServerConfig struct {
 	BindAddress     string
 	BindPort        int
 	Domain          string
-	TrustedHosts    string
 	MaxRecipients   int
 	MaxIdleSeconds  int
 	MaxClients      int
