@@ -257,9 +257,7 @@ func NewServer(output chan<- Message, cfg ServerConfig) *Server {
 }
 
 func (s *Server) writeMessage(msg Message) {
-	fmt.Println("Writing to channel")
 	s.outChan <- msg
-	fmt.Println("Successfully wrote")
 }
 
 // Start begins the server's main listener loop, preparing it to accept incoming emails.
@@ -432,20 +430,17 @@ func (c *client) parseMessage(mimeParser bool) Message {
 
 	(func() {
 		if !mimeParser {
-			fmt.Println("Setting message content to raw data", c.data)
 			msg.Content = contentFromString(c.data)
 			return
 		}
 		msg.Content = &Content{Size: len(c.data), Headers: make(map[string][]string, 0), Body: c.data}
 		readMsg, err := mail.ReadMessage(bytes.NewBufferString(c.data))
 		if err != nil {
-			fmt.Println("Encountered error reading message: ", err)
 			msg.Content.TextBody = c.data
 			return
 		}
 		mimetype, parsed, err := mime.ParseMediaType(readMsg.Header.Get("Content-Type"))
 		if err == nil && strings.HasPrefix(mimetype, "multipart/") {
-			fmt.Println("Parsing MIME message")
 			mimeBody := &MIMEBody{Parts: make([]*MIMEPart, 0)}
 			err = parseMIME(mimeBody, readMsg.Body, parsed["boundary"], &msg)
 			if err == nil {
@@ -454,15 +449,12 @@ func (c *client) parseMessage(mimeParser bool) Message {
 			}
 			return
 		}
-		fmt.Printf("Setting mail body:\n%v\n=>\n%v\n\n", readMsg, msg)
 		setMailBody(readMsg, &msg)
 	})()
 
-	fmt.Println("Creating a random ID")
 	randomID := make([]byte, 16)
 	rand.Read(randomID)
 	hexStr := hex.EncodeToString(randomID)
-	fmt.Println("Created random id", hexStr)
 	recd := fmt.Sprintf(
 		"from %s ([%s]) by %s (Smtpd)\r\n  for <%s>; %s\r\n",
 		c.helo, c.remoteHost, c.server.domain, hexStr+"@"+c.server.domain, time.Now().Format(time.RFC1123Z))
@@ -470,7 +462,6 @@ func (c *client) parseMessage(mimeParser bool) Message {
 	msg.Content.Headers["Message-ID"] = []string{hexStr + "@" + c.server.domain}
 	msg.Content.Headers["Received"] = []string{recd}
 	msg.Content.Headers["Return-Path"] = []string{"<" + c.from + ">"}
-	fmt.Println("Created finalized message\n", msg)
 	return msg
 }
 
